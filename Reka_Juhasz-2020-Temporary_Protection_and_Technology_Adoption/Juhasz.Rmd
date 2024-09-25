@@ -1,0 +1,241 @@
+---
+title: "Juhasz_replication"
+author: "Thomas Bombarde"
+date: "2024-01-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(tidyverse)
+library(ggplot2)
+library(plm)
+library(AER)
+# Data
+department_pretreatment_panel <- read_dta("department_pretreatment_panel.dta")
+department_shortrun_panel.dta <- read_dta("department_shortrun_panel.dta")
+department_longrun_panel.dta <- read_dta("department_longrun.dta")
+```
+
+# Setup
+
+We observe 88 départements in 1794, 1803, 1809, and 1860. We want to know if the Napoleonic blockade of 1806 has significant effect on the accumulation of spindles in départements more protected from English smuggled goods.
+  
+# Pre-trends
+
+Before running let's understand the changes in areas thought treated vs not treated before the introduction of the blockade, e.g. checking for pre-trends. The following Figure displays the relationship between distance to Britain through smuggling roots used in 1807
+
+```{r plotpretrends}
+prepre_relation_plot <- ggplot(department_pretreatment_panel %>% 
+                                 filter(thspindles!=0),
+                            aes(x = lnshortestLo, y = thspindles)) + 
+  geom_point(size = 1, color = "#2c3e50", alpha = 1)+
+  geom_smooth(method = "lm", 
+              color = "#e74c3c",  # Use a bold red color for the line
+              fill = "#e74c3c",   # Fill the confidence interval with a lighter red shade
+              alpha = .2,        # Add transparency to the fill for subtle effect
+              size = 1.2,         # Make the line slightly thicker
+              se = TRUE) +
+  facet_wrap(~year, scale="free") +
+  facet_wrap(~year, scales="free") +
+  labs(
+    x = "Log(Shortest Distance to Britain)",
+    y = "Log(Spindles per Thousand Inhabitants)"
+  ) + 
+  theme_minimal(base_size = 15) +  # Use a clean minimal theme
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 18),  # Center and enlarge title
+    axis.title.x = element_text(margin = margin(t = 10)),  # Add space between labels and axis
+    axis.title.y = element_text(margin = margin(r = 10)),
+    strip.background = element_blank(),  # Remove background for facets
+    strip.text = element_text(size = 12, face = "bold"),  # Bold facet labels
+    panel.spacing = unit(1, "lines"),  # Increase spacing between facets
+    legend.position = "none"  # Remove legend (since it's not needed)
+  )
+  
+print(prepre_relation_plot)
+#+
+  #theme(text = element_text(family="serif"))
+
+```
+
+There doesn't seem to be strong evidence of a positive linear relationship. We can see this when run the model below. 
+There is considerable jump in the average effect of being further from Great Britain, but this is not significant.
+
+```{r}
+model <- plm(thspindles ~ year*lnshortestLo, data=department_pretreatment_panel, index=c("year", "department"))
+summary(model)
+```
+
+
+# Short-run
+
+Did industry protection against smuggled English goods during the Napoleonic blockade increase spindle-accumulation?
+
+```{r plotshortrun}
+ggplot(department_shortrun_panel.dta %>% 
+         filter(thspindles!=0), 
+       aes(x=lnshortestLo, y= thspindles)) + 
+  geom_point(size = 1, color = "#2c3e50", alpha = 1) +
+  geom_smooth(method = "lm", 
+              color = "#e74c3c",  # Use a bold red color for the line
+              fill = "#e74c3c",   # Fill the confidence interval with a lighter red shade
+              alpha = .2,        # Add transparency to the fill for subtle effect
+              size = 1.2,         # Make the line slightly thicker
+              se = TRUE) +
+  facet_wrap(~year, scale="free") +
+  labs(
+    x = "Log(Shortest Distance to Britain)",
+    y = "Log(Spindles per Thousand Inhabitants)"
+  ) + 
+  theme_minimal(base_size = 15) +  # Use a clean minimal theme
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 18),  # Center and enlarge title
+    axis.title.x = element_text(margin = margin(t = 10)),  # Add space between labels and axis
+    axis.title.y = element_text(margin = margin(r = 10)),
+    strip.background = element_blank(),  # Remove background for facets
+    strip.text = element_text(size = 12, face = "bold"),  # Bold facet labels
+    panel.spacing = unit(1, "lines"),  # Increase spacing between facets
+    legend.position = "none"  # Remove legend (since it's not needed)
+  )
+```
+
+Looks better! What does this say numerically? We run the Difference in Difference type model as the number of spindles regressed on year fixed effects and the shortest distance of that year
+```{r lmpretrend}
+model <- plm(thspindles ~ year + lnshortestLo, data=department_shortrun_panel.dta, model = "within", effect = "individual")#
+sumshortrun <- summary(model)
+sumshortrun
+lnshortestLo_coef <- sumshortrun$coefficients[2,1]
+```
+
+Before the treatment, there is no relationship between effective distance to the UK and spindle density. Afterhand, a 100% increase in effective distance adds a whopping `r lnshortestLo_coef[1]` increase to the number of spindles/inhabitant! We're assuming people aren't flooding to cities as close as possible to the enemy, so the change should be coming from greater mechanisation, in line with the infant industry argument.
+
+There are caveats we should check, and ways we can make this relationship stronger. Variables that might add drown out our results are
+
+- Obligatory conscription, which might decrease our population estimates. 
+- Growing market access, the inverse of summed distance to cities scaled for département population, which might also have faciliated new technology adoption. 
+- Migration of knowledge elites away from the Englishm or perhaps less demands in cities closer to the enemy? we can control for knowledge access and literacy in 1812.
+- coal, which rises in importance with the industrialisation of the period. 
+
+Juhasz adds these one by one in her regression, and checks that effective distance is significant in each. Adding them all in, we get
+
+```{r lmshortruncontrols}
+model <- plm(thspindles ~ year + lnshortestLo +
+               lnstreamflowX1812 + 
+               lncoalX1812 + 
+               lnma_universityX1812 +
+               lnma_urbanX1812 + 
+               literacyX1812,
+             data=filter(department_shortrun_panel.dta,is.na(literacyX1812)==F), model = "within", effect = "individual")
+sumshortrun <- summary(model)
+sumshortrun
+lnshortestLo_coef <- sumshortrun$coefficients[2,1]
+```
+With these controls, our estimated effect is greater, if negligibly less significant. So far, we have assumed the relationship between effective distance and increased spindles is driven by the increase in smuggling costs, acting throughs the infant-industry argument. 
+However, we should consider two other shocks in this period:
+
+A. a rise in prices of raw cotton 
+
+B. the expansion of the French Empire. 
+
+These two developments could have the same spatial effects as the increase cotton good prices, and make our regression spurious.
+
+Addressing A, Juhasz (2018) maps price data in north and southern France. She argues that this is fairly uniform, and that this should be expected given that the rise in prices was due to a rise in tariffs. What about the smuggling routes for raw cotton?
+
+1.  Juhasz (2018) claims that little raw cotton was purchased from Britain. Even if they did, smuggling would arguably work in the favour of the infant industry arguement, because raw cotton and cotton goods would have taken the same route. Given that cotton inputs and goods were both cheaper, which effect dominates? The regression just would support the latter. We'll take the argument that cotton prices increase uniformly over France for granted.
+
+2.  Raw cotton was often brought in by land, from Portugal and the Levant. These were not affectd by the blockade. A simulataneous shock Juhasz (2018) does not address is the role of Portugal as an opponent of the Napoleonic Regime, which is a question for someone with more historical knowledge than me.
+
+Addressing B -- that what might be increasing French industrialisation is access to markets in Europe through Napoleon's invasion -- Juhasz includes a measure of market potential to European cities within the French Empire. She later extends this with access to markets within France's sphere of influence, as defined by  Grab (2003). 
+
+```{r lmpretrendrobusteness}
+model <- plm(thspindles ~ year + lnshortestLo +
+               lnma_urban_externalX1812, #lnma_urbanX1812:access to european markets
+             data=department_shortrun_panel.dta, 
+             model = "within",
+             effect = "individual")
+summary(model)
+
+```
+
+
+However, this assumes that the effect of market access and protection from British imports are independent. One might imagine that protection from british goods locally is important for the perseverance of local industry, but access to larger (foreign) markets is necessary for domestic industry's expansion. Thus, given protection from British goods, the increase in industrialisation might still be increasing in access to foreign markets. This should be captured by the interaction term between access to foreign continental markets and import exposure. I add this to Juhasz's specification. 
+
+```{r}
+model <- plm(thspindles ~ year + lnshortestLo*lnma_urban_externalX1812, #lnma_urbanX1812:access to european markets
+             data=department_shortrun_panel.dta, 
+             model = "within",
+             effect = "individual")
+sumshortrun <- summary(model)
+sumshortrun
+lnshortestLo_coef <- sumshortrun$coefficients[2,1]
+```
+
+Neither specification hinders the signifiance of Juhasz's result: it appears industry protection really is driving industrialisation. One might note, nevertheless, that the effect is smaller: a 100% rise in effective distance adds `r lnshortestLo_coef[1]` to the departement in 1812. Running the full model, The effect is now only significant at alpha=0.9, but this arguably because we have made the model more complex.
+
+```{r}
+model <- plm(thspindles ~ year + lnshortestLo +
+               lnstreamflowX1812 + 
+               lncoalX1812 + 
+               lnma_universityX1812 +
+               lnma_urbanX1812 + 
+               literacyX1812 +
+               lnshortestLo*lnma_urban_externalX1812,
+             data=filter(department_shortrun_panel.dta,is.na(literacyX1812)==F), model = "within", effect = "individual")
+sumshortrun <- summary(model)
+sumshortrun
+lnshortestLo_coef <- sumshortrun$coefficients[2,1]
+```
+
+# Long-run
+
+If the short-run increase in mechanisation really is driven by the opportunity of French départements to invest in industrial fixed-costs that increased their competitivity, then we should observe some persistence of higher productivity over time. 
+Juhasz (2018) looks at the effect of increased cotton-spinning on both spinning capacity, and industrialization in 1840 and 1887. She runs the IV,
+
+\begin{align}
+S_{i1812} &= \alpha_0 + \beta_0 \text{D}_{i} + mathbf{X} \mathbf{\gamma} \eta_{it} \\
+Y_{it} &= \alpha + \beta \hat{S}_{it} + \mathbf{X} \mathbf{\gamma} + \epsilon_{it},
+\end{align}
+
+where $i$ denotes département, $t$ year, $S_{i1812}$ is spindle capacity in 1812, $D_i$ is the change in trade costs imposed by the napoleonic blockade, and $\mathbf{X}$ is a set of controls.
+
+The exclusion restriction requires that no other variables linked to the outcome $Y_{it}$ are correlated with the increase in trade cost. While this seem disputable given that smuggling routes could have had effects on the development of an informal/formal economy. To rebut this, Juhasz (2018) provides a placebo test using the pretreatment period, and lagged spinning capacity as a control, but she recognises that other shocks correlated with trade costs between 1812 and the outcome variable would confound results. 
+
+In the following, I do not use the same standard errors as Juhasz, but cluster these at the level of the observation. 
+
+```{r}
+# Spindle capacity in 1840?
+model <- ivreg(thspindles1840 ~ thspindles1812 + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803 | dlnshortestLo + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803, data=department_longrun_panel.dta)
+summary(model)
+
+# Spindle capacity in 1887?
+model <- ivreg(thspindles1887 ~ thspindles1812 + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803 | dlnshortestLo + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803, data=department_longrun_panel.dta)
+summary(model)
+```
+and for industrial output, with the rationale being positive spillovers from cotton , 
+
+```{r}
+# Industrial value added per capita in 1860?
+model <- ivreg(lnindustrie1860pc ~ thspindles1812 + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803 | dlnshortestLo + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803, data=department_longrun_panel.dta)
+summary(model)
+
+# Industrial value added per capita in 1896?
+model <- ivreg(lnindustrie1896pc ~ thspindles1812 + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803 | dlnshortestLo + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803, data=department_longrun_panel.dta)
+summary(model)
+
+# Industrial value added per capita in 1930?
+model <- ivreg(lnindustrie1930pc ~ thspindles1812 + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803 | dlnshortestLo + literacy + lnma_urban + lnma_university + lncoal + lnstreamflow + thspindles1803, data=department_longrun_panel.dta)
+summary(model)
+```
+
+It seems that while the trade shock increases industry value added in a département in 1860, this effect washes out by 1896. This could be due to another trade shock in the 1860s: the Cobban-Chevalier treaty, but Juhasz does not touch on this. 
+
+# Conclusion
+
+Juhasz (2018) provides strong evidence for the infant industry argument by exploiting a form of in industry protection exogenous to the intentions and attention of the policy maker. Here results are robust, and Juhasz provides additional qualitative and quantitative support for the fact that increased trade costs in cotton goods led to an increase in cotton spinning capacity with positive industrial spillovers until 1860. 
+
+As the author acknowledges, the exclusion restriction is tenuous to argue over a period in which other shocks may be correlated with the increase in transport costs brought by the Napoleonic blockade. In addition, the effect of increased spinning capacity washes out after 1860, which might question how important this head start really was to French industrialisation. 
+
+On a purely technical basis, I would have liked to see a discussion of the interaction between spinning capacity and access to export markets, especially as this weakens the significance of the result of the paper. This remains a seminal piece in the new economics of industrial policy, and a forceful piece of causal inference for economic history. 
+
